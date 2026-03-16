@@ -1,5 +1,4 @@
 import pandas as pd
-import re
 
 
 def clean_diary(df: pd.DataFrame) -> pd.DataFrame:
@@ -92,19 +91,12 @@ def build_master(
     ratings: pd.DataFrame,
     watched: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Base de filmes únicos assistidos.
-    Fonte primária: watched (tem todos os filmes).
-    Enriquece com nota do ratings.
-    """
     base = watched[["title", "year", "letterboxd_uri", "watched_date"]].drop_duplicates(
         subset=["letterboxd_uri"]
     )
-
     ratings_dedup = ratings[["letterboxd_uri", "rating"]].drop_duplicates(
         subset=["letterboxd_uri"]
     )
-
     master = base.merge(ratings_dedup, on="letterboxd_uri", how="left")
 
     diary_extra = diary[["letterboxd_uri", "is_rewatch", "tags"]].drop_duplicates(
@@ -120,6 +112,12 @@ def build_master(
     return master
 
 
+def add_film_id(df: pd.DataFrame, master: pd.DataFrame) -> pd.DataFrame:
+    """Adiciona film_id em qualquer tabela que tenha letterboxd_uri."""
+    uri_to_id = master[["letterboxd_uri", "film_id"]].drop_duplicates()
+    return df.merge(uri_to_id, on="letterboxd_uri", how="left")
+
+
 def transform_all(raw: dict) -> dict[str, pd.DataFrame]:
     diary     = clean_diary(raw["diary"])
     ratings   = clean_ratings(raw["ratings"])
@@ -129,9 +127,17 @@ def transform_all(raw: dict) -> dict[str, pd.DataFrame]:
 
     master = build_master(diary, ratings, watched)
 
+    # Adiciona film_id nas tabelas que têm letterboxd_uri
+    diary     = add_film_id(diary, master)
+    reviews   = add_film_id(reviews, master)
+    # watchlist não tem film_id pois os filmes ainda não foram assistidos
+    # mas pode ter tmdb_id após enriquecimento — deixamos sem film_id
+
     print(f"[transform] master: {len(master)} filmes únicos")
     print(f"[transform] com nota: {master['rating'].notna().sum()}")
     print(f"[transform] rewatches: {master['is_rewatch'].sum()}")
+    print(f"[transform] diary com film_id: {diary['film_id'].notna().sum()}/{len(diary)}")
+    print(f"[transform] reviews com film_id: {reviews['film_id'].notna().sum()}/{len(reviews)}")
 
     return {
         "master":    master,
