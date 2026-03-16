@@ -113,9 +113,12 @@ def build_master(
 
 
 def add_film_id(df: pd.DataFrame, master: pd.DataFrame) -> pd.DataFrame:
-    """Adiciona film_id em qualquer tabela que tenha letterboxd_uri."""
-    uri_to_id = master[["letterboxd_uri", "film_id"]].drop_duplicates()
-    return df.merge(uri_to_id, on="letterboxd_uri", how="left")
+    """
+    Adiciona film_id via join por title + year.
+    Usado em diary e reviews que têm URIs diferentes do master.
+    """
+    key = master[["title", "year", "film_id"]].drop_duplicates(subset=["title", "year"])
+    return df.merge(key, on=["title", "year"], how="left")
 
 
 def transform_all(raw: dict) -> dict[str, pd.DataFrame]:
@@ -127,11 +130,8 @@ def transform_all(raw: dict) -> dict[str, pd.DataFrame]:
 
     master = build_master(diary, ratings, watched)
 
-    # Adiciona film_id nas tabelas que têm letterboxd_uri
-    diary     = add_film_id(diary, master)
-    reviews   = add_film_id(reviews, master)
-    # watchlist não tem film_id pois os filmes ainda não foram assistidos
-    # mas pode ter tmdb_id após enriquecimento — deixamos sem film_id
+    diary   = add_film_id(diary, master)
+    reviews = add_film_id(reviews, master)
 
     print(f"[transform] master: {len(master)} filmes únicos")
     print(f"[transform] com nota: {master['rating'].notna().sum()}")
