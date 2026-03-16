@@ -1,0 +1,4 @@
+pandas>=2.0
+requests>=2.31
+python-dotenv>=1.0
+duckdb>=0.10          # opcional, só se quiser usar --duckdb
