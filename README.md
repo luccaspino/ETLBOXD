@@ -2,6 +2,11 @@
 
 Pipeline de dados que extrai o histórico de filmes do Letterboxd, transforma e enriquece com metadados da API do TMDB, e carrega os dados processados para análise em Power BI.
 
+
+O ETLBOXD é uma pipeline ETL pessoal que transforma dados brutos exportados do Letterboxd em um dashboard analítico interativo. O projeto parte dos CSVs gerados pela plataforma — histórico assistido, notas, diário, watchlist e críticas — e os enriquece com metadados da API do TMDB, adicionando gênero, duração, país de produção, idioma original, nota do público, sinopse, diretor e top 3 atores de cada filme.
+A pipeline foi desenvolvida em Python com pandas, organizada em três etapas: extração dos CSVs, transformação e limpeza dos dados com construção de um modelo estrela normalizado, e carga em arquivos processados prontos para consumo. O projeto conta com cache local para evitar chamadas desnecessárias à API e está dockerizado para facilitar a execução em qualquer ambiente.
+No Power BI, os dados são carregados seguindo o modelo estrela com tabelas dimensão para gêneros, países, diretores e atores, conectadas ao fato central via tabelas ponte. Duas tabelas calendário complementam o modelo — uma para data de exibição e outra para ano de lançamento. As medidas DAX calculam KPIs como total de filmes, horas consumidas, médias de nota e o comparativo entre a avaliação pessoal e a nota do público no TMDB.
+
 ## Estrutura do projeto
 
 ```
@@ -52,9 +57,9 @@ Para cada filme, a pipeline busca na API do TMDB:
 
 ## Setup
 
-### Com Docker (recomendado)
+### Com Docker 
 
-```bash
+
 # 1. Clone o repositório
 git clone https://github.com/seu-usuario/letterboxd-etl
 cd letterboxd-etl
@@ -68,7 +73,7 @@ cp .env.example .env
 
 # 4. Rode
 docker compose up
-```
+
 
 ### Sem Docker
 
@@ -76,25 +81,24 @@ pip install -r requirements.txt
 cp .env.example .env
 # edite .env com sua TMDB_API_KEY
 python main.py
-``
 
 ## Opções de execução
 
 python main.py                  # pipeline completa com TMDB
 python main.py --skip-tmdb      # pula TMDB (teste local sem API key)
 python main.py --duckdb         # salva também em DuckDB
-``
+
 
 ## Modelo estrela — saída da pipeline
 
-```
+
 master.csv (fato)
     │
     ├── film_genres.csv    → genres.csv
     ├── film_countries.csv → countries.csv
     ├── film_directors.csv → directors.csv
     └── film_actors.csv    → actors.csv
-```
+
 
 Relacionamentos a criar no Power BI:
 - `master[film_id]` → `film_genres[film_id]` → `genres[genre_id]`
@@ -115,3 +119,7 @@ Os resultados são salvos em `data/tmdb_cache.csv`. Rodar a pipeline novamente s
 - duckdb (opcional)
 - Docker
 - Power BI Desktop
+
+
+---------------------------
+
