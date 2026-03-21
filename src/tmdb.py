@@ -3,10 +3,14 @@ import time
 import requests
 import pandas as pd
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 
 TMDB_BASE = "https://api.themoviedb.org/3"
 CACHE_PATH = Path("data/tmdb_cache.csv")
+MAX_WORKERS = 10
+DELAY = 0.1  # segundos entre chamadas por thread
 
 
 def _get_api_key() -> str:
@@ -20,7 +24,6 @@ def _get_api_key() -> str:
 
 
 def _search_movie(title: str, year: int, api_key: str) -> int | None:
-    """Retorna o tmdb_id do primeiro resultado ou None."""
     params = {
         "api_key": api_key,
         "query": title,
@@ -40,7 +43,6 @@ def _search_movie(title: str, year: int, api_key: str) -> int | None:
 
 
 def _get_movie_details(tmdb_id: int, api_key: str) -> dict:
-    """Retorna detalhes + créditos em duas chamadas."""
     details = {}
     try:
         r = requests.get(
@@ -50,28 +52,23 @@ def _get_movie_details(tmdb_id: int, api_key: str) -> dict:
         )
         r.raise_for_status()
         data = r.json()
-        details["tmdb_id"]           = tmdb_id
-        details["tmdb_title"]        = data.get("title")
-        details["original_language"] = data.get("original_language")
-        details["runtime_min"]       = data.get("runtime")
-        details["genres"]            = ", ".join(
-            g["name"] for g in data.get("genres", [])
-        )
-        details["production_countries"] = ", ".join(
-            c["iso_3166_1"] for c in data.get("production_countries", [])
-        )
-        details["tmdb_rating"]       = data.get("vote_average")
-        details["tmdb_votes"]        = data.get("vote_count")
-        details["poster_path"]       = (
+        details["tmdb_id"]               = tmdb_id
+        details["tmdb_title"]            = data.get("title")
+        details["original_language"]     = data.get("original_language")
+        details["runtime_min"]           = data.get("runtime")
+        details["genres"]                = ", ".join(g["name"] for g in data.get("genres", []))
+        details["production_countries"]  = ", ".join(c["iso_3166_1"] for c in data.get("production_countries", []))
+        details["tmdb_rating"]           = data.get("vote_average")
+        details["tmdb_votes"]            = data.get("vote_count")
+        details["poster_path"]           = (
             f"https://image.tmdb.org/t/p/w500{data['poster_path']}"
             if data.get("poster_path") else None
         )
-        details["overview"]          = data.get("overview")
-        details["tagline"]           = data.get("tagline")
+        details["overview"]              = data.get("overview")
+        details["tagline"]               = data.get("tagline")
     except Exception as e:
         print(f"[tmdb] erro em detalhes id={tmdb_id}: {e}")
 
-    # Créditos (diretor + top 3 atores)
     try:
         rc = requests.get(
             f"{TMDB_BASE}/movie/{tmdb_id}/credits",
@@ -80,18 +77,25 @@ def _get_movie_details(tmdb_id: int, api_key: str) -> dict:
         )
         rc.raise_for_status()
         cdata = rc.json()
-
         cast = [m["name"] for m in cdata.get("cast", [])[:3]]
         details["cast_top3"] = ", ".join(cast)
-
-        directors = [
-            m["name"] for m in cdata.get("crew", [])
-            if m.get("job") == "Director"
-        ]
+        directors = [m["name"] for m in cdata.get("crew", []) if m.get("job") == "Director"]
         details["director"] = ", ".join(directors)
     except Exception as e:
         print(f"[tmdb] erro em créditos id={tmdb_id}: {e}")
 
+    return details
+
+
+def _fetch_one(row: pd.Series, api_key: str) -> dict:
+    """Busca dados de um filme no TMDB. Chamada por cada thread."""
+    time.sleep(DELAY)
+    tmdb_id = _search_movie(row["title"], row.get("year"), api_key)
+    if tmdb_id:
+        details = _get_movie_details(tmdb_id, api_key)
+    else:
+        details = {"tmdb_id": None}
+    details["letterboxd_uri"] = row["letterboxd_uri"]
     return details
 
 
@@ -107,47 +111,54 @@ def save_cache(cache: dict[str, dict]) -> None:
     pd.DataFrame(list(cache.values())).to_csv(CACHE_PATH, index=False)
 
 
-def enrich_with_tmdb(master: pd.DataFrame, delay: float = 0.25) -> pd.DataFrame:
-    """
-    Enriquece o dataframe master com dados do TMDB.
-    Usa cache local para evitar re-chamadas entre execuções.
-    delay: segundos entre chamadas (respeita rate limit gratuito: 40 req/s).
-    """
+def enrich_with_tmdb(master: pd.DataFrame) -> pd.DataFrame:
     api_key = _get_api_key()
     cache = load_cache()
 
-    rows = []
-    total = len(master)
+    # Separa filmes que já estão no cache dos que precisam ser buscados
+    cached_rows = []
+    to_fetch = []
 
-    for i, row in master.iterrows():
+    for _, row in master.iterrows():
         uri = row["letterboxd_uri"]
-
         if uri in cache:
-            rows.append(cache[uri])
-            continue
-
-        print(f"[tmdb] {i+1}/{total} → {row['title']} ({row.get('year', '?')})")
-
-        tmdb_id = _search_movie(row["title"], row.get("year"), api_key)
-        if tmdb_id:
-            details = _get_movie_details(tmdb_id, api_key)
+            cached_rows.append(cache[uri])
         else:
-            details = {"tmdb_id": None}
+            to_fetch.append(row)
 
-        details["letterboxd_uri"] = uri
-        cache[uri] = details
-        rows.append(details)
+    print(f"[tmdb] {len(cached_rows)} filmes no cache, {len(to_fetch)} para buscar")
 
-        # Salva cache a cada 50 filmes
-        if (i + 1) % 50 == 0:
-            save_cache(cache)
-            print(f"[tmdb] cache salvo ({i+1} filmes processados)")
+    cache_lock = Lock()
+    results = list(cached_rows)
+    completed = 0
 
-        time.sleep(delay)
+    if to_fetch:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(_fetch_one, row, api_key): row
+                for row in to_fetch
+            }
 
-    save_cache(cache)
-    print(f"[tmdb] concluído. Cache salvo em {CACHE_PATH}")
+            for future in as_completed(futures):
+                try:
+                    details = future.result()
+                    results.append(details)
 
-    tmdb_df = pd.DataFrame(rows)
+                    with cache_lock:
+                        cache[details["letterboxd_uri"]] = details
+                        completed += 1
+
+                        # Salva cache a cada 50 filmes novos
+                        if completed % 50 == 0:
+                            save_cache(cache)
+                            print(f"[tmdb] {completed}/{len(to_fetch)} buscados...")
+
+                except Exception as e:
+                    print(f"[tmdb] erro numa thread: {e}")
+
+        save_cache(cache)
+        print(f"[tmdb] concluído. {len(to_fetch)} filmes buscados com {MAX_WORKERS} threads.")
+
+    tmdb_df = pd.DataFrame(results)
     enriched = master.merge(tmdb_df, on="letterboxd_uri", how="left")
     return enriched

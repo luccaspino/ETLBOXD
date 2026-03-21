@@ -135,10 +135,4 @@ def normalize(master_path: str = "data/processed/master.csv") -> None:
     _save(film_actors_df, "film_actors")
 
     print("\n[normalize] concluído. Modelo estrela pronto para o Power BI.")
-    print("""
-Relacionamentos a criar no Power BI:
-  master[film_id]      → film_genres[film_id]     → genres[genre_id]
-  master[film_id]      → film_countries[film_id]  → countries[country_id]
-  master[film_id]      → film_directors[film_id]  → directors[director_id]
-  master[film_id]      → film_actors[film_id]     → actors[actor_id]
-    """)
+

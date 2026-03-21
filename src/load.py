@@ -19,17 +19,3 @@ def save_all(transformed: dict[str, pd.DataFrame]) -> None:
     print("\n[load] todos os arquivos salvos em data/processed/")
     print("       Conecte o Power BI a esta pasta para montar o dashboard.")
 
-
-# Opcional: salvar em DuckDB para queries SQL
-def save_duckdb(transformed: dict[str, pd.DataFrame], db_path: str = "data/letterboxd.duckdb") -> None:
-    try:
-        import duckdb
-        con = duckdb.connect(db_path)
-        for name, df in transformed.items():
-            con.execute(f"DROP TABLE IF EXISTS {name}")
-            con.execute(f"CREATE TABLE {name} AS SELECT * FROM df")
-            print(f"[load] duckdb → tabela '{name}' ({len(df)} linhas)")
-        con.close()
-        print(f"[load] banco salvo em {db_path}")
-    except ImportError:
-        print("[load] duckdb não instalado — pulando. Use: pip install duckdb")
